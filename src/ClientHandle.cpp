@@ -76,6 +76,7 @@ cClientHandle::cClientHandle(const AString & a_IPString, int a_ViewDistance) :
 	m_LastStreamedChunkX(std::numeric_limits<decltype(m_LastStreamedChunkX)>::max()),  // bogus chunk coords to force streaming upon login
 	m_LastStreamedChunkZ(std::numeric_limits<decltype(m_LastStreamedChunkZ)>::max()),
 	m_TicksSinceLastPacket(0),
+	m_TimeSinceLastUnloadCheck(0),
 	m_Ping(1000),
 	m_PingID(1),
 	m_BlockDigAnimStage(-1),
@@ -243,6 +244,36 @@ void cClientHandle::ProxyInit(const AString & a_IPString, const cUUID & a_UUID, 
 
 
 
+void cClientHandle::ProcessProtocolIn(void)
+{
+	// Process received network data:
+	decltype(m_IncomingData) IncomingData;
+	{
+		cCSLock Lock(m_CSIncomingData);
+
+		// Bail out when nothing was received:
+		if (m_IncomingData.empty())
+		{
+			return;
+		}
+
+		std::swap(IncomingData, m_IncomingData);
+	}
+
+	try
+	{
+		m_Protocol.HandleIncomingData(*this, IncomingData);
+	}
+	catch (const std::exception & Oops)
+	{
+		Kick(Oops.what());
+	}
+}
+
+
+
+
+
 void cClientHandle::ProcessProtocolOut()
 {
 	decltype(m_OutgoingData) OutgoingData;
@@ -394,7 +425,7 @@ void cClientHandle::FinishAuthenticate()
 	}
 	catch (const std::exception & Oops)
 	{
-		LOGWARNING("Error reading player \"%s\": %s", GetUsername().c_str(), Oops.what());
+		LOGWARNING("Player \"%s\" save or statistics file loading failed: %s", GetUsername().c_str(), Oops.what());
 		Kick("Contact an operator.\n\nYour player's save files could not be parsed.\nTo avoid data loss you are prevented from joining.");
 		return;
 	}
@@ -632,8 +663,6 @@ void cClientHandle::UnloadOutOfRangeChunks(void)
 		m_Player->GetWorld()->RemoveChunkClient(itr->m_ChunkX, itr->m_ChunkZ, this);
 		SendUnloadChunk(itr->m_ChunkX, itr->m_ChunkZ);
 	}
-
-	m_LastUnloadCheck = m_Player->GetWorld()->GetWorldAge();
 }
 
 
@@ -815,8 +844,8 @@ void cClientHandle::HandleEnchantItem(UInt8 a_WindowID, UInt8 a_Enchantment)
 		// Only allow enchantment if the player has sufficient levels and lapis to enchant:
 		if ((m_Player->GetCurrentXp() >= XpRequired) && (LapisStack.m_ItemCount >= LapisRequired))
 		{
-			/** We need to reduce the player's level by the number of lapis required.
-			However we need to keep the resulting percentage filled the same. */
+			// We need to reduce the player's level by the number of lapis required.
+			// However we need to keep the resulting percentage filled the same.
 
 			const auto TargetLevel = m_Player->GetXpLevel() - LapisRequired;
 			const auto CurrentFillPercent = m_Player->GetXpPercentage();
@@ -842,7 +871,7 @@ void cClientHandle::HandleEnchantItem(UInt8 a_WindowID, UInt8 a_Enchantment)
 		}
 	}
 
-	// Retrieve the enchanted item corresponding to our chosen option (top, middle, bottom)
+	// The enchanted item corresponding to our chosen option (top, middle, bottom).
 	cItem EnchantedItem = Window->m_SlotArea->SelectEnchantedOption(a_Enchantment);
 
 	// Set the item slot to our new enchanted item:
@@ -1135,8 +1164,8 @@ void cClientHandle::HandleLeftClick(int a_BlockX, int a_BlockY, int a_BlockZ, eB
 
 		case DIG_STATUS_SHOOT_EAT:
 		{
-			cItemHandler * ItemHandler = cItemHandler::GetItemHandler(m_Player->GetEquippedItem());
-			if (ItemHandler->IsFood() || ItemHandler->IsDrinkable(m_Player->GetEquippedItem().m_ItemDamage))
+			auto & ItemHandler = m_Player->GetEquippedItem().GetHandler();
+			if (ItemHandler.IsFood() || ItemHandler.IsDrinkable(m_Player->GetEquippedItem().m_ItemDamage))
 			{
 				m_Player->AbortEating();
 				return;
@@ -1151,9 +1180,12 @@ void cClientHandle::HandleLeftClick(int a_BlockX, int a_BlockY, int a_BlockZ, eB
 				// When bow is in off-hand / shield slot
 				if (m_Player->GetInventory().GetShieldSlot().m_ItemType == E_ITEM_BOW)
 				{
-					ItemHandler = cItemHandler::GetItemHandler(m_Player->GetInventory().GetShieldSlot());
+					m_Player->GetInventory().GetShieldSlot().GetHandler().OnItemShoot(m_Player, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
 				}
-				ItemHandler->OnItemShoot(m_Player, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
+				else
+				{
+					ItemHandler.OnItemShoot(m_Player, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
+				}
 			}
 			return;
 		}
@@ -1290,8 +1322,7 @@ void cClientHandle::HandleBlockDigStarted(int a_BlockX, int a_BlockY, int a_Bloc
 	cChunkInterface ChunkInterface(World->GetChunkMap());
 	cBlockHandler::For(DiggingBlock).OnDigging(ChunkInterface, *World, *m_Player, {a_BlockX, a_BlockY, a_BlockZ});
 
-	cItemHandler * ItemHandler = cItemHandler::GetItemHandler(m_Player->GetEquippedItem());
-	ItemHandler->OnDiggingBlock(World, m_Player, m_Player->GetEquippedItem(), {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
+	m_Player->GetEquippedItem().GetHandler().OnDiggingBlock(World, m_Player, m_Player->GetEquippedItem(), {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
 }
 
 
@@ -1423,7 +1454,7 @@ void cClientHandle::HandleRightClick(int a_BlockX, int a_BlockY, int a_BlockZ, e
 	// TODO: We are still consuming the items in main hand. Remove this override when the off-hand consumption is handled correctly.
 	a_UsedMainHand = true;
 	const cItem & HeldItem = a_UsedMainHand ? m_Player->GetEquippedItem() : m_Player->GetInventory().GetShieldSlot();
-	cItemHandler * ItemHandler = cItemHandler::GetItemHandler(HeldItem.m_ItemType);
+	auto & ItemHandler = HeldItem.GetHandler();
 
 	// TODO: This distance should be calculated from the point that the cursor pointing at, instead of the center of the block
 	// Distance from the block's center to the player's eye height
@@ -1451,7 +1482,7 @@ void cClientHandle::HandleRightClick(int a_BlockX, int a_BlockY, int a_BlockZ, e
 		World->GetBlockTypeMeta(ClickedBlockPos, BlockType, BlockMeta);
 		const auto & BlockHandler = cBlockHandler::For(BlockType);
 
-		bool Placeable = ItemHandler->IsPlaceable() && !m_Player->IsGameModeAdventure() && !m_Player->IsGameModeSpectator();
+		bool Placeable = ItemHandler.IsPlaceable() && !m_Player->IsGameModeAdventure() && !m_Player->IsGameModeSpectator();
 		bool BlockUsable = BlockHandler.IsUseable() && (!m_Player->IsGameModeSpectator() || cBlockInfo::IsUseableBySpectator(BlockType));
 
 		if (BlockUsable && !(m_Player->IsCrouched() && !HeldItem.IsEmpty()))
@@ -1470,7 +1501,7 @@ void cClientHandle::HandleRightClick(int a_BlockX, int a_BlockY, int a_BlockZ, e
 				if (Placeable)
 				{
 					// Place a block:
-					ItemHandler->OnPlayerPlace(*m_Player, HeldItem, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace, {a_CursorX, a_CursorY, a_CursorZ});
+					ItemHandler.OnPlayerPlace(*m_Player, HeldItem, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace, {a_CursorX, a_CursorY, a_CursorZ});
 				}
 
 				return;
@@ -1487,7 +1518,7 @@ void cClientHandle::HandleRightClick(int a_BlockX, int a_BlockY, int a_BlockZ, e
 			}
 
 			// Place a block:
-			ItemHandler->OnPlayerPlace(*m_Player, HeldItem, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace, {a_CursorX, a_CursorY, a_CursorZ});
+			ItemHandler.OnPlayerPlace(*m_Player, HeldItem, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace, {a_CursorX, a_CursorY, a_CursorZ});
 			return;
 		}
 		else if (!PlgMgr->CallHookPlayerUsingItem(*m_Player, a_BlockX, a_BlockY, a_BlockZ, a_BlockFace, a_CursorX, a_CursorY, a_CursorZ))
@@ -1496,7 +1527,7 @@ void cClientHandle::HandleRightClick(int a_BlockX, int a_BlockY, int a_BlockZ, e
 			// Use an item in hand with a target block.
 
 			cBlockInServerPluginInterface PluginInterface(*World);
-			ItemHandler->OnItemUse(World, m_Player, PluginInterface, HeldItem, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
+			ItemHandler.OnItemUse(World, m_Player, PluginInterface, HeldItem, {a_BlockX, a_BlockY, a_BlockZ}, a_BlockFace);
 			PlgMgr->CallHookPlayerUsedItem(*m_Player, a_BlockX, a_BlockY, a_BlockZ, a_BlockFace, a_CursorX, a_CursorY, a_CursorZ);
 			return;
 		}
@@ -1825,7 +1856,7 @@ void cClientHandle::HandleUseItem(bool a_UsedMainHand)
 	// TODO: We are still consuming the items in main hand. Remove this override when the off-hand consumption is handled correctly.
 	a_UsedMainHand = true;
 	const cItem & HeldItem = a_UsedMainHand ? m_Player->GetEquippedItem() : m_Player->GetInventory().GetShieldSlot();
-	cItemHandler * ItemHandler = cItemHandler::GetItemHandler(HeldItem.m_ItemType);
+	auto & ItemHandler = HeldItem.GetHandler();
 	cWorld * World = m_Player->GetWorld();
 	cPluginManager * PlgMgr = cRoot::Get()->GetPluginManager();
 
@@ -1843,10 +1874,10 @@ void cClientHandle::HandleUseItem(bool a_UsedMainHand)
 		return;
 	}
 
-	if (ItemHandler->IsFood() || ItemHandler->IsDrinkable(HeldItem.m_ItemDamage))
+	if (ItemHandler.IsFood() || ItemHandler.IsDrinkable(HeldItem.m_ItemDamage))
 	{
 		if (
-			ItemHandler->IsFood() &&
+			ItemHandler.IsFood() &&
 			(m_Player->IsSatiated() || m_Player->IsGameModeCreative()) &&  // Only non-creative or hungry players can eat
 			(HeldItem.m_ItemType != E_ITEM_GOLDEN_APPLE) &&  // Golden apple is a special case, it is used instead of eaten
 			(HeldItem.m_ItemType != E_ITEM_CHORUS_FRUIT)     // Chorus fruit is a special case, it is used instead of eaten
@@ -1867,7 +1898,7 @@ void cClientHandle::HandleUseItem(bool a_UsedMainHand)
 		{
 			// All plugins agree with using the item
 			cBlockInServerPluginInterface PluginInterface(*World);
-			ItemHandler->OnItemUse(World, m_Player, PluginInterface, HeldItem, {-1, 255, -1}, BLOCK_FACE_NONE);
+			ItemHandler.OnItemUse(World, m_Player, PluginInterface, HeldItem, {-1, 255, -1}, BLOCK_FACE_NONE);
 			PlgMgr->CallHookPlayerUsedItem(*m_Player, -1, 255, -1, BLOCK_FACE_NONE, 0, 0, 0);
 		}
 	}
@@ -2071,18 +2102,9 @@ bool cClientHandle::CheckBlockInteractionsRate(void)
 
 
 
-void cClientHandle::Tick(float a_Dt)
+void cClientHandle::Tick(std::chrono::milliseconds a_Dt)
 {
 	using namespace std::chrono_literals;
-
-	// anticheat fastbreak
-	if (m_HasStartedDigging)
-	{
-		BLOCKTYPE Block = m_Player->GetWorld()->GetBlock({ m_LastDigBlockX, m_LastDigBlockY, m_LastDigBlockZ });
-		m_BreakProgress += m_Player->GetMiningProgressPerTick(Block);
-	}
-
-	ProcessProtocolIn();
 
 	if (IsDestroyed())
 	{
@@ -2156,16 +2178,24 @@ void cClientHandle::Tick(float a_Dt)
 	StreamNextChunks();
 
 	// Unload all chunks that are out of the view distance (every 5 seconds):
-	if ((m_Player->GetWorld()->GetWorldAge() - m_LastUnloadCheck) > 5s)
+	if ((m_TimeSinceLastUnloadCheck += a_Dt) > 5s)
 	{
 		UnloadOutOfRangeChunks();
+		m_TimeSinceLastUnloadCheck = 0s;
+	}
+
+	// anticheat fastbreak
+	if (m_HasStartedDigging)
+	{
+		BLOCKTYPE Block = m_Player->GetWorld()->GetBlock({ m_LastDigBlockX, m_LastDigBlockY, m_LastDigBlockZ });
+		m_BreakProgress += m_Player->GetMiningProgressPerTick(Block);
 	}
 
 	// Handle block break animation:
 	if (m_BlockDigAnimStage > -1)
 	{
 		int lastAnimVal = m_BlockDigAnimStage;
-		m_BlockDigAnimStage += static_cast<int>(m_BlockDigAnimSpeed * a_Dt);
+		m_BlockDigAnimStage += static_cast<int>(m_BlockDigAnimSpeed * a_Dt.count());
 		if (m_BlockDigAnimStage > 9000)
 		{
 			m_BlockDigAnimStage = 9000;
@@ -2903,17 +2933,17 @@ void cClientHandle::SendResetTitle()
 
 
 
-void cClientHandle::SendRespawn(eDimension a_Dimension, bool a_ShouldIgnoreDimensionChecks)
+void cClientHandle::SendRespawn(const eDimension a_Dimension, const bool a_IsRespawningFromDeath)
 {
-	if (!a_ShouldIgnoreDimensionChecks && (a_Dimension == m_Player->GetWorld()->GetDimension()))
+	if (!a_IsRespawningFromDeath && (a_Dimension == m_Player->GetWorld()->GetDimension()))
 	{
 		// The client goes crazy if we send a respawn packet with the dimension of the current world
 		// So we send a temporary one first.
-		// This is not needed when the player dies, hence the a_ShouldIgnoreDimensionChecks flag.
-		// a_ShouldIgnoreDimensionChecks is true only at cPlayer::Respawn, which is called after
-		// the player dies.
-		eDimension TemporaryDimension = (a_Dimension == dimOverworld) ? dimNether : dimOverworld;
-		m_Protocol->SendRespawn(TemporaryDimension);
+		// This is not needed when the player dies, hence the a_IsRespawningFromDeath flag.
+		// a_IsRespawningFromDeath is true only at cPlayer::Respawn, which is called after the player dies.
+
+		// First send a temporary dimension to placate the client:
+		m_Protocol->SendRespawn((a_Dimension == dimOverworld) ? dimNether : dimOverworld);
 	}
 
 	m_Protocol->SendRespawn(a_Dimension);
@@ -3377,36 +3407,6 @@ bool cClientHandle::SetState(eState a_NewState)
 	}
 	m_State = a_NewState;
 	return true;
-}
-
-
-
-
-
-void cClientHandle::ProcessProtocolIn(void)
-{
-	// Process received network data:
-	decltype(m_IncomingData) IncomingData;
-	{
-		cCSLock Lock(m_CSIncomingData);
-
-		// Bail out when nothing was received:
-		if (m_IncomingData.empty())
-		{
-			return;
-		}
-
-		std::swap(IncomingData, m_IncomingData);
-	}
-
-	try
-	{
-		m_Protocol.HandleIncomingData(*this, IncomingData);
-	}
-	catch (const std::exception & Oops)
-	{
-		Kick(Oops.what());
-	}
 }
 
 
