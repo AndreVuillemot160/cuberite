@@ -8,6 +8,7 @@
 #include "../Bindings/PluginManager.h"
 #include "../BoundingBox.h"
 #include "../Blocks/BlockHandler.h"
+#include "../Blocks/BlockFarmland.h"
 #include "../EffectID.h"
 #include "../Mobs/Monster.h"
 
@@ -102,6 +103,23 @@ void cPawn::Tick(std::chrono::milliseconds a_Dt, cChunk & a_Chunk)
 		return;
 	}
 	HandleFalling();
+
+	// Handle item pickup
+	if (m_Health > 0)
+	{
+		if (IsPlayer())
+		{
+			m_World->CollectPickupsByEntity(*this);
+		}
+		else if (IsMob())
+		{
+			cMonster & Mob = static_cast<cMonster &>(*this);
+			if (Mob.CanPickUpLoot())
+			{
+				m_World->CollectPickupsByEntity(*this);
+			}
+		}
+	}
 }
 
 
@@ -303,11 +321,10 @@ void cPawn::HandleFalling(void)
 	With this in mind, we first check the block at the player's feet, then the one below that (because fences),
 	and decide which behaviour we want to go with.
 	*/
-	BLOCKTYPE BlockAtFoot = (cChunkDef::IsValidHeight(POSY_TOINT)) ? GetWorld()->GetBlock(POS_TOINT) : E_BLOCK_AIR;
+	BLOCKTYPE BlockAtFoot = (cChunkDef::IsValidHeight(POS_TOINT)) ? GetWorld()->GetBlock(POS_TOINT) : static_cast<BLOCKTYPE>(E_BLOCK_AIR);
 
 	/* We initialize these with what the foot is really IN, because for sampling we will move down with the epsilon above */
 	bool IsFootInWater = IsBlockWater(BlockAtFoot);
-	bool IsFootInLiquid = IsFootInWater || IsBlockLava(BlockAtFoot) || (BlockAtFoot == E_BLOCK_COBWEB);  // okay so cobweb is not _technically_ a liquid...
 	bool IsFootOnSlimeBlock = false;
 
 	/* The "cross" we sample around to account for the player width/girth */
@@ -348,7 +365,7 @@ void cPawn::HandleFalling(void)
 		{
 			Vector3i BlockTestPosition = CrossTestPosition.Floor() + BlockSampleOffsets[j];
 
-			if (!cChunkDef::IsValidHeight(BlockTestPosition.y))
+			if (!cChunkDef::IsValidHeight(BlockTestPosition))
 			{
 				continue;
 			}
@@ -360,7 +377,6 @@ void cPawn::HandleFalling(void)
 			if (j == 0)
 			{
 				IsFootInWater |= IsBlockWater(BlockType);
-				IsFootInLiquid |= IsFootInWater || IsBlockLava(BlockType) || (BlockType == E_BLOCK_COBWEB);  // okay so cobweb is not _technically_ a liquid...
 				IsFootOnSlimeBlock |= (BlockType == E_BLOCK_SLIME_BLOCK);
 			}
 
@@ -415,7 +431,9 @@ void cPawn::HandleFalling(void)
 
 	if (OnGround)
 	{
-		auto Damage = static_cast<int>(m_LastGroundHeight - GetPosY() - 3.0);
+		auto FallHeight = m_LastGroundHeight - GetPosY();
+		auto Damage = static_cast<int>(FallHeight - 3.0);
+
 		if ((Damage > 0) && !FallDamageAbsorbed)
 		{
 			if (IsElytraFlying())
@@ -423,7 +441,6 @@ void cPawn::HandleFalling(void)
 				Damage = static_cast<int>(static_cast<float>(Damage) * 0.33);
 			}
 
-			// Fall particles:
 			if (const auto Below = POS_TOINT.addedY(-1); Below.y >= 0)
 			{
 				const auto BlockBelow = GetWorld()->GetBlock(Below);
@@ -433,6 +450,7 @@ void cPawn::HandleFalling(void)
 					Damage = std::clamp(static_cast<int>(static_cast<float>(Damage) * 0.2), 1, 20);
 				}
 
+				// Fall particles
 				GetWorld()->BroadcastParticleEffect(
 					"blockdust",
 					GetPosition(),
@@ -448,6 +466,15 @@ void cPawn::HandleFalling(void)
 
 		m_bTouchGround = true;
 		m_LastGroundHeight = GetPosY();
+
+		// Farmland trampling. Mobs smaller than 0.512 cubic blocks won't trample (Java Edition's behavior)
+		// We only have width and height, so we have to calculate Width^2
+		if (GetWorld()->IsFarmlandTramplingEnabled() &&
+			(BlockAtFoot == E_BLOCK_FARMLAND) &&
+			(GetWidth() * GetWidth() * GetHeight() >= 0.512))
+		{
+			HandleFarmlandTrampling(FallHeight);
+		}
 	}
 	else
 	{
@@ -457,6 +484,42 @@ void cPawn::HandleFalling(void)
 	/* Note: it is currently possible to fall through lava and still die from fall damage
 	because of the client skipping an update about the lava block. This can only be resolved by
 	somehow integrating these above checks into the tracer in HandlePhysics. */
+}
+
+
+
+
+
+void cPawn::HandleFarmlandTrampling(double a_FallHeight)
+{
+	bool ShouldTrample = true;
+	auto & Random = GetRandomProvider();
+
+	// No trampling if FallHeight <= 0.6875
+	if (a_FallHeight <= 0.6875)
+	{
+		ShouldTrample = false;
+	}
+	// For FallHeight <= 1.5625 we need to get a random bool
+	else if (a_FallHeight <= 1.0625)
+	{
+		ShouldTrample = Random.RandBool(0.25);
+	}
+	else if (a_FallHeight <= 1.5625)
+	{
+		ShouldTrample = Random.RandBool(0.66);
+	}
+	// For FallHeight > 1.5625 we always trample - ShouldTrample remains true
+
+	if (ShouldTrample)
+	{
+		auto AbsPos = GetPosition().Floor();
+		GetWorld()->DoWithChunkAt(AbsPos, [&](cChunk & Chunk)
+		{
+			cBlockFarmlandHandler::TurnToDirt(Chunk, AbsPos);
+			return true;
+		});
+	}
 }
 
 

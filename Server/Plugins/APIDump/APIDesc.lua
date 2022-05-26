@@ -908,16 +908,6 @@ return
 					},
 					Notes = "Returns true if the chunk is set to use default height generator",
 				},
-				IsUsingDefaultStructures =
-				{
-					Returns =
-					{
-						{
-							Type = "boolean",
-						},
-					},
-					Notes = "Returns true if the chunk is set to use default structures",
-				},
 				RandomFillRelCuboid =
 				{
 					{
@@ -1257,17 +1247,6 @@ return
 						},
 					},
 					Notes = "Sets the chunk to use default height generator or not",
-				},
-				SetUseDefaultStructures =
-				{
-					Params =
-					{
-						{
-							Name = "ShouldUseDefaultStructures",
-							Type = "boolean",
-						},
-					},
-					Notes = "Sets the chunk to use default structures or not",
 				},
 				UpdateHeightmap =
 				{
@@ -8707,10 +8686,6 @@ a_Player:OpenWindow(Window);
 			]],
 			Functions =
 			{
-				EraseData =
-				{
-					Notes = "Erases all pixel data.",
-				},
 				GetCenterX =
 				{
 					Returns =
@@ -8998,16 +8973,6 @@ a_Player:OpenWindow(Window);
 						},
 					},
 					Notes = "If a map with the specified ID exists, calls the CallbackFunction for that map. The CallbackFunction has the following signature: <pre class=\"prettyprint lang-lua\">function Callback({{cMap|Map}})</pre> Returns true if the map was found and the callback called, false if map not found.",
-				},
-				GetNumMaps =
-				{
-					Returns =
-					{
-						{
-							Type = "number",
-						},
-					},
-					Notes = "Returns the number of registered maps.",
 				},
 			},
 		},
@@ -9774,7 +9739,7 @@ a_Player:OpenWindow(Window);
 								Type = "Vector3i",
 							},
 						},
-						Notes = "Function to find suitable teleport destination in or below box. Returns true and places result in Destination if found, otherwise returns false. Details at: https://minecraft.fandom.com/wiki/Enderman#Teleportation.",
+						Notes = "Function to find suitable teleport destination in or below box. Returns true and places result in Destination if found, otherwise returns false. Details at: {{https://minecraft.fandom.com/wiki/Enderman#Teleportation}}.",
 					},
 					{
 						Params =
@@ -9800,7 +9765,7 @@ a_Player:OpenWindow(Window);
 								Type = "cBoundingBox",
 							},
 						},
-						Notes = "Function to find suitable teleport destination in or below box. Returns true and places result in Destination if found, otherwise returns false. Details at: https://minecraft.fandom.com/wiki/Enderman#Teleportation.",
+						Notes = "Function to find suitable teleport destination in or below box. Returns true and places result in Destination if found, otherwise returns false. Details at: {{https://minecraft.fandom.com/wiki/Enderman#Teleportation}}.",
 					},
 					{
 						Params =
@@ -9826,7 +9791,7 @@ a_Player:OpenWindow(Window);
 								Type = "number",
 							},
 						},
-						Notes = "Function to find suitable teleport destination in or below box. Returns true and places result in Destination if found, otherwise returns false. Details at: https://minecraft.fandom.com/wiki/Enderman#Teleportation.",
+						Notes = "Function to find suitable teleport destination in or below box. Returns true and places result in Destination if found, otherwise returns false. Details at: {{https://minecraft.fandom.com/wiki/Enderman#Teleportation}}.",
 					},
 				},
 				HasEntityEffect =
@@ -10183,8 +10148,8 @@ a_Player:OpenWindow(Window);
 					Params =
 					{
 						{
-							Name = "Player",
-							Type = "cPlayer",
+							Name = "Entity",
+							Type = "cEntity",
 						},
 					},
 					Returns =
@@ -10194,7 +10159,7 @@ a_Player:OpenWindow(Window);
 							Type = "boolean",
 						},
 					},
-					Notes = "Tries to make the player collect the pickup. Returns true if the pickup was collected, at least partially.",
+					Notes = "Tries to make the entity collect the pickup. Returns true if the pickup was collected, at least partially.",
 				},
 				GetAge =
 				{
@@ -11441,17 +11406,6 @@ a_Player:OpenWindow(Window);
 						},
 					},
 					Notes = "Sets the dominant hand of the player.",
-				},
-				SetName =
-				{
-					Params =
-					{
-						{
-							Name = "Name",
-							Type = "string",
-						},
-					},
-					Notes = "Sets the player name. This rename will NOT be visible to any players already in the server who are close enough to see this player.",
 				},
 				SetNormalMaxSpeed =
 				{
@@ -13225,14 +13179,6 @@ end
 					},
 					Notes = "Generates a version 3, variant 1 UUID based on the md5 hash of Name."
 				},
-			},
-		},
-		cWebPlugin =
-		{
-			Desc = "",
-			Functions =
-			{
-
 			},
 		},
 		cWindow =
@@ -18877,6 +18823,24 @@ end
 					},
 					Notes = "Returns true if the specified item type is any kind of a tool (axe, hoe, pickaxe, shovel or FIXME: sword)",
 				},
+				IsVillagerFood =
+				{
+					IsStatic = true,
+					Params =
+					{
+						{
+							Name = "ItemType",
+							Type = "number",
+						},
+					},
+					Returns =
+					{
+						{
+							Type = "boolean",
+						},
+					},
+					Notes = "Returns true if the specified item type is any kind of a pickable food by a villager (potato, carrot, wheat, bread and any kind of seeds).",
+				}
 			},
 			AdditionalInfo =
 			{

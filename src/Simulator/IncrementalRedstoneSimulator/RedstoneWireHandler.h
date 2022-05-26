@@ -146,7 +146,7 @@ namespace RedstoneWireHandler
 				(NeighbourChunk->GetBlock(Adjacent + OffsetYP) == E_BLOCK_REDSTONE_WIRE)  // Only terrace YP with another wire
 			)
 			{
-				SetDirectionState(Offset, Block, TemporaryDirection::Up);
+				SetDirectionState(Offset, Block, cBlockInfo::IsTransparent(LateralBlock) ? TemporaryDirection::Side : TemporaryDirection::Up);
 
 				if (NeighbourChunk != &Chunk)
 				{
@@ -313,7 +313,7 @@ namespace RedstoneWireHandler
 					const auto YMDiagonalPosition = Relative + OffsetYM;
 					if (
 						BLOCKTYPE QueryBlock;
-						cChunkDef::IsValidHeight(YMDiagonalPosition.y) &&
+						cChunkDef::IsValidHeight(YMDiagonalPosition) &&
 						a_Chunk.UnboundedRelGetBlockType(YMDiagonalPosition, QueryBlock) &&
 						(QueryBlock == E_BLOCK_REDSTONE_WIRE)
 					)
