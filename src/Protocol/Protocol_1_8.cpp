@@ -313,7 +313,7 @@ void cProtocol_1_8_0::SendChat(const AString & a_Message, eChatType a_Type)
 {
 	ASSERT(m_State == 3);  // In game mode?
 
-	SendChatRaw(fmt::format(FMT_STRING("{{\"text\":\"{}\"}}"), EscapeString(a_Message)), a_Type);
+	SendChatRaw(JsonUtils::SerializeSingleValueJsonObject("text", a_Message), a_Type);
 }
 
 
@@ -433,13 +433,13 @@ void cProtocol_1_8_0::SendDisconnect(const AString & a_Reason)
 		case State::Login:
 		{
 			cPacketizer Pkt(*this, pktDisconnectDuringLogin);
-			Pkt.WriteString(fmt::format(FMT_STRING("{{\"text\":\"{}\"}}"), EscapeString(a_Reason)));
+			Pkt.WriteString(JsonUtils::SerializeSingleValueJsonObject("text", a_Reason));
 			break;
 		}
 		case State::Game:
 		{
 			cPacketizer Pkt(*this, pktDisconnectDuringGame);
-			Pkt.WriteString(fmt::format(FMT_STRING("{{\"text\":\"{}\"}}"), EscapeString(a_Reason)));
+			Pkt.WriteString(JsonUtils::SerializeSingleValueJsonObject("text", a_Reason));
 			break;
 		}
 		default:
@@ -1103,7 +1103,7 @@ void cProtocol_1_8_0::SendPlayerListUpdateDisplayName(const cPlayer & a_Player, 
 	else
 	{
 		Pkt.WriteBool(true);
-		Pkt.WriteString(fmt::format(FMT_STRING("{{\"text\":\"{}\"}}"), a_CustomName));
+		Pkt.WriteString(JsonUtils::SerializeSingleValueJsonObject("text", a_CustomName));
 	}
 }
 
@@ -1659,9 +1659,7 @@ void cProtocol_1_8_0::SendUpdateSign(Vector3i a_BlockPos, const AString & a_Line
 	AString Lines[] = { a_Line1, a_Line2, a_Line3, a_Line4 };
 	for (size_t i = 0; i < ARRAYCOUNT(Lines); i++)
 	{
-		Json::Value RootValue;
-		RootValue["text"] = Lines[i];
-		Pkt.WriteString(JsonUtils::WriteFastString(RootValue));
+		Pkt.WriteString(JsonUtils::SerializeSingleValueJsonObject("text", Lines[i]));
 	}
 }
 
@@ -1750,7 +1748,7 @@ void cProtocol_1_8_0::SendWindowOpen(const cWindow & a_Window)
 	cPacketizer Pkt(*this, pktWindowOpen);
 	Pkt.WriteBEUInt8(static_cast<UInt8>(a_Window.GetWindowID()));
 	Pkt.WriteString(a_Window.GetWindowTypeName());
-	Pkt.WriteString(fmt::format(FMT_STRING("{{\"text\":\"{}\"}}"), a_Window.GetWindowTitle()));
+	Pkt.WriteString(JsonUtils::SerializeSingleValueJsonObject("text", a_Window.GetWindowTitle()));
 
 	switch (a_Window.GetWindowType())
 	{
@@ -3138,7 +3136,7 @@ void cProtocol_1_8_0::WriteBlockEntity(cFastNBTWriter & a_Writer, const cBlockEn
 			a_Writer.AddString("CustomName", "@");
 			if (!CommandBlockEntity.GetLastOutput().empty())
 			{
-				a_Writer.AddString("LastOutput", fmt::format(FMT_STRING("{{\"text\":\"{}\"}}"), CommandBlockEntity.GetLastOutput()));
+				a_Writer.AddString("LastOutput", JsonUtils::SerializeSingleValueJsonObject("text", CommandBlockEntity.GetLastOutput()));
 			}
 			break;
 		}
@@ -3154,7 +3152,7 @@ void cProtocol_1_8_0::WriteBlockEntity(cFastNBTWriter & a_Writer, const cBlockEn
 			a_Writer.AddByte("SkullType", MobHeadEntity.GetType() & 0xFF);
 			a_Writer.AddByte("Rot", MobHeadEntity.GetRotation() & 0xFF);
 
-			// The new Block Entity format for a Mob Head. See: https://minecraft.gamepedia.com/Head#Block_entity
+			// The new Block Entity format for a Mob Head. See: https://minecraft.wiki/w/Head#Block_entity
 			a_Writer.BeginCompound("Owner");
 				a_Writer.AddString("Id", MobHeadEntity.GetOwnerUUID().ToShortString());
 				a_Writer.AddString("Name", MobHeadEntity.GetOwnerName());
@@ -3763,7 +3761,6 @@ void cProtocol_1_8_0::WriteMobMetadata(cPacketizer & a_Pkt, const cMonster & a_M
 
 		case mtCat:
 
-		case mtEndermite:
 
 		case mtDonkey:
 		case mtMule:
@@ -3781,6 +3778,7 @@ void cProtocol_1_8_0::WriteMobMetadata(cPacketizer & a_Pkt, const cMonster & a_M
 		case mtIronGolem:
 		case mtMooshroom:
 		case mtSilverfish:
+		case mtEndermite:
 		case mtSnowGolem:
 		case mtSpider:
 		case mtSquid:
